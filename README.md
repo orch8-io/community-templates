@@ -45,5 +45,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to add a template.
 
 ## License
 
-**No license has been chosen yet.** See [LICENSE](LICENSE). The maintainers
-need to choose one before this repository is published.
+MIT. See [LICENSE](LICENSE). Contributed templates are accepted under the
+same license.

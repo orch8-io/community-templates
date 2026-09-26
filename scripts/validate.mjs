@@ -6,7 +6,7 @@
 //    obvious secrets, validation block present.
 // 2. Engine check: runs the sequence once through the real engine with
 //      orch8 dev <sequence.json> --dry-run --skip-timers --once
-//        --context <validation.context> --mock <handler>=<json> ...
+//        --input <validation.context> --mock <handler>=<json> ...
 //    Side-effecting handlers and external-worker handlers are mocked from
 //    template.json `validation.mocks`, so this proves the definition parses,
 //    passes engine validation, resolves its templates, and reaches a
@@ -138,7 +138,7 @@ for (const dir of dirs) {
       "--dry-run",
       "--skip-timers",
       "--once",
-      "--context",
+      "--input",
       JSON.stringify(meta.validation.context),
     ];
     for (const [handler, output] of Object.entries(meta.validation.mocks ?? {})) {

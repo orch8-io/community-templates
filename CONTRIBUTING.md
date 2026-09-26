@@ -50,7 +50,7 @@ the real engine:
 
 ```
 orch8 dev templates/<name>/sequence.json --dry-run --skip-timers --once \
-  --context '<validation.context>' --mock <handler>=<json> ...
+  --input '<validation.context>' --mock <handler>=<json> ...
 ```
 
 Handlers listed in `validation.mocks` return the given JSON instead of
@@ -87,5 +87,4 @@ CI (`.github/workflows/validate.yml`) runs the same checks and fails if
 - Is the description accurate? Are `requires` and the worker contracts complete?
 - Nothing in the template should send data somewhere the user didn't configure.
 - Mocks should be realistic enough that routers take a meaningful branch.
-- Does the contributor agree to the repository license? The license is still
-  **TODO** (see LICENSE). Don't merge outside contributions until one is chosen.
+- Does the contributor agree to the repository license (MIT, see LICENSE)?
