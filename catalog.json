@@ -1,0 +1,729 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {
+      "name": "approval-chain",
+      "description": "Two-level human approval: manager review, then finance sign-off above an amount threshold, then a callback with the final decision.",
+      "tags": [
+        "approvals",
+        "human-in-the-loop",
+        "router"
+      ],
+      "author": "orch8-io",
+      "min_engine_version": "0.7.1",
+      "handlers": {
+        "builtin": [
+          "human_review",
+          "noop",
+          "http_request"
+        ],
+        "workers": []
+      },
+      "requires": [
+        "Reviewers answer through the approvals inbox (dashboard, `/api/v1/approvals`, or the mobile SDK).",
+        "context.data: request_id, summary, amount (number), finance_threshold (number), callback_url.",
+        "An unanswered review times out after 48h (manager) / 72h (finance); adjust wait_for_input.timeout to your policy."
+      ],
+      "sequence": {
+        "$schema": "https://orch8.io/contracts/sequence.schema.json",
+        "schema_version": 1,
+        "namespace": "default",
+        "name": "approval-chain",
+        "blocks": [
+          {
+            "type": "step",
+            "id": "manager_approval",
+            "handler": "human_review",
+            "params": {
+              "instructions": "Approve or reject request {{context.data.request_id}}: {{context.data.summary}}",
+              "reviewer": "manager"
+            },
+            "wait_for_input": {
+              "prompt": "Manager approval",
+              "timeout": 172800000,
+              "choices": [
+                {
+                  "label": "Approve",
+                  "value": "approved"
+                },
+                {
+                  "label": "Reject",
+                  "value": "rejected"
+                }
+              ],
+              "store_as": "manager_decision"
+            }
+          },
+          {
+            "type": "router",
+            "id": "route_manager_decision",
+            "routes": [
+              {
+                "condition": "context.data.manager_decision == \"approved\" && context.data.amount > context.data.finance_threshold",
+                "blocks": [
+                  {
+                    "type": "step",
+                    "id": "finance_approval",
+                    "handler": "human_review",
+                    "params": {
+                      "instructions": "Finance sign-off for {{context.data.request_id}} (amount {{context.data.amount}})",
+                      "reviewer": "finance"
+                    },
+                    "wait_for_input": {
+                      "prompt": "Finance approval",
+                      "timeout": 259200000,
+                      "choices": [
+                        {
+                          "label": "Approve",
+                          "value": "approved"
+                        },
+                        {
+                          "label": "Reject",
+                          "value": "rejected"
+                        }
+                      ],
+                      "store_as": "finance_decision"
+                    }
+                  }
+                ]
+              }
+            ],
+            "default": [
+              {
+                "type": "step",
+                "id": "skip_finance",
+                "handler": "noop",
+                "params": {
+                  "reason": "below finance threshold or rejected by manager"
+                }
+              }
+            ]
+          },
+          {
+            "type": "router",
+            "id": "route_final_decision",
+            "routes": [
+              {
+                "condition": "context.data.manager_decision == \"approved\" && context.data.finance_decision != \"rejected\"",
+                "blocks": [
+                  {
+                    "type": "step",
+                    "id": "notify_approved",
+                    "handler": "http_request",
+                    "params": {
+                      "method": "POST",
+                      "url": "{{context.data.callback_url}}",
+                      "headers": {
+                        "content-type": "application/json"
+                      },
+                      "body": "{\"request_id\":\"{{context.data.request_id}}\",\"decision\":\"approved\"}"
+                    },
+                    "retry": {
+                      "max_attempts": 5,
+                      "initial_backoff": 2000,
+                      "max_backoff": 300000,
+                      "backoff_multiplier": 2
+                    }
+                  }
+                ]
+              }
+            ],
+            "default": [
+              {
+                "type": "step",
+                "id": "notify_rejected",
+                "handler": "http_request",
+                "params": {
+                  "method": "POST",
+                  "url": "{{context.data.callback_url}}",
+                  "headers": {
+                    "content-type": "application/json"
+                  },
+                  "body": "{\"request_id\":\"{{context.data.request_id}}\",\"decision\":\"rejected\"}"
+                },
+                "retry": {
+                  "max_attempts": 5,
+                  "initial_backoff": 2000,
+                  "max_backoff": 300000,
+                  "backoff_multiplier": 2
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "onboarding-drip",
+      "description": "Welcome email, day-1 getting-started email, then a business-day activation check that nudges inactive users and alerts the success team.",
+      "tags": [
+        "onboarding",
+        "email",
+        "drip",
+        "delays",
+        "router"
+      ],
+      "author": "orch8-io",
+      "min_engine_version": "0.7.1",
+      "handlers": {
+        "builtin": [
+          "http_request",
+          "log",
+          "emit_event"
+        ],
+        "workers": []
+      },
+      "requires": [
+        "An HTTP email API reachable at context.data.email_api_url that accepts {template, to}.",
+        "An activation-status endpoint at context.data.activation_status_url returning JSON {\"activated\": bool}.",
+        "An event trigger whose slug is context.data.success_team_trigger (emit_event fails if the trigger does not exist)."
+      ],
+      "sequence": {
+        "$schema": "https://orch8.io/contracts/sequence.schema.json",
+        "schema_version": 1,
+        "namespace": "default",
+        "name": "onboarding-drip",
+        "blocks": [
+          {
+            "type": "step",
+            "id": "send_welcome",
+            "handler": "http_request",
+            "params": {
+              "method": "POST",
+              "url": "{{context.data.email_api_url}}",
+              "headers": {
+                "content-type": "application/json"
+              },
+              "body": "{\"template\":\"welcome\",\"to\":\"{{context.data.email}}\"}"
+            },
+            "retry": {
+              "max_attempts": 5,
+              "initial_backoff": 2000,
+              "max_backoff": 300000,
+              "backoff_multiplier": 2
+            },
+            "timeout": 30000
+          },
+          {
+            "type": "step",
+            "id": "send_getting_started",
+            "handler": "http_request",
+            "params": {
+              "method": "POST",
+              "url": "{{context.data.email_api_url}}",
+              "headers": {
+                "content-type": "application/json"
+              },
+              "body": "{\"template\":\"getting_started\",\"to\":\"{{context.data.email}}\"}"
+            },
+            "delay": {
+              "duration": 86400000
+            },
+            "retry": {
+              "max_attempts": 5,
+              "initial_backoff": 2000,
+              "max_backoff": 300000,
+              "backoff_multiplier": 2
+            },
+            "timeout": 30000
+          },
+          {
+            "type": "step",
+            "id": "check_activation",
+            "handler": "http_request",
+            "params": {
+              "method": "GET",
+              "url": "{{context.data.activation_status_url}}"
+            },
+            "delay": {
+              "duration": 172800000,
+              "business_days_only": true
+            },
+            "retry": {
+              "max_attempts": 3,
+              "initial_backoff": 5000,
+              "max_backoff": 60000,
+              "backoff_multiplier": 2
+            },
+            "timeout": 15000
+          },
+          {
+            "type": "router",
+            "id": "route_by_activation",
+            "routes": [
+              {
+                "condition": "outputs.check_activation.body.activated == true",
+                "blocks": [
+                  {
+                    "type": "step",
+                    "id": "log_activated",
+                    "handler": "log",
+                    "params": {
+                      "message": "user activated during onboarding"
+                    }
+                  }
+                ]
+              }
+            ],
+            "default": [
+              {
+                "type": "step",
+                "id": "send_activation_nudge",
+                "handler": "http_request",
+                "params": {
+                  "method": "POST",
+                  "url": "{{context.data.email_api_url}}",
+                  "headers": {
+                    "content-type": "application/json"
+                  },
+                  "body": "{\"template\":\"activation_nudge\",\"to\":\"{{context.data.email}}\"}"
+                },
+                "retry": {
+                  "max_attempts": 5,
+                  "initial_backoff": 2000,
+                  "max_backoff": 300000,
+                  "backoff_multiplier": 2
+                },
+                "timeout": 30000
+              },
+              {
+                "type": "step",
+                "id": "notify_success_team",
+                "handler": "emit_event",
+                "params": {
+                  "trigger_slug": "{{context.data.success_team_trigger}}",
+                  "data": {
+                    "email": "{{context.data.email}}",
+                    "reason": "not_activated_after_onboarding"
+                  },
+                  "dedupe_key": "onboarding-not-activated-{{context.data.email}}",
+                  "dedupe_scope": "tenant"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "payment-dunning",
+      "description": "Charge a failed invoice up to three times (immediately, after 3 days, after 5 more days) with per-attempt retries and customer emails, then suspend the subscription.",
+      "tags": [
+        "billing",
+        "dunning",
+        "payments",
+        "try-catch",
+        "delays",
+        "workers"
+      ],
+      "author": "orch8-io",
+      "min_engine_version": "0.7.1",
+      "handlers": {
+        "builtin": [
+          "http_request",
+          "log"
+        ],
+        "workers": [
+          {
+            "handler": "charge_payment",
+            "queue": "billing",
+            "contract": "Input {invoice_id, attempt}. Complete on success; fail the task (non-retryable) on a hard decline so the catch path runs. Must be idempotent per (invoice_id, attempt)."
+          },
+          {
+            "handler": "suspend_subscription",
+            "queue": "billing",
+            "contract": "Input {invoice_id}. Suspends the subscription that owns the invoice. Must be idempotent."
+          }
+        ]
+      },
+      "requires": [
+        "External workers for charge_payment and suspend_subscription polling queue `billing` (see docs/WORKERS.md in the engine repo).",
+        "An HTTP email API at context.data.email_api_url that accepts {template, to, invoice_id}."
+      ],
+      "sequence": {
+        "$schema": "https://orch8.io/contracts/sequence.schema.json",
+        "schema_version": 1,
+        "namespace": "default",
+        "name": "payment-dunning",
+        "blocks": [
+          {
+            "type": "try_catch",
+            "id": "attempt_1",
+            "try_block": [
+              {
+                "type": "step",
+                "id": "charge_1",
+                "handler": "charge_payment",
+                "queue_name": "billing",
+                "params": {
+                  "invoice_id": "{{context.data.invoice_id}}",
+                  "attempt": 1
+                },
+                "retry": {
+                  "max_attempts": 3,
+                  "initial_backoff": 60000,
+                  "max_backoff": 600000,
+                  "backoff_multiplier": 2
+                },
+                "timeout": 60000
+              }
+            ],
+            "catch_block": [
+              {
+                "type": "step",
+                "id": "notify_failed_1",
+                "handler": "http_request",
+                "params": {
+                  "method": "POST",
+                  "url": "{{context.data.email_api_url}}",
+                  "headers": {
+                    "content-type": "application/json"
+                  },
+                  "body": "{\"template\":\"payment_failed\",\"to\":\"{{context.data.email}}\",\"invoice_id\":\"{{context.data.invoice_id}}\"}"
+                },
+                "retry": {
+                  "max_attempts": 5,
+                  "initial_backoff": 2000,
+                  "max_backoff": 300000,
+                  "backoff_multiplier": 2
+                }
+              },
+              {
+                "type": "try_catch",
+                "id": "attempt_2",
+                "try_block": [
+                  {
+                    "type": "step",
+                    "id": "charge_2",
+                    "handler": "charge_payment",
+                    "queue_name": "billing",
+                    "params": {
+                      "invoice_id": "{{context.data.invoice_id}}",
+                      "attempt": 2
+                    },
+                    "delay": {
+                      "duration": 259200000
+                    },
+                    "retry": {
+                      "max_attempts": 3,
+                      "initial_backoff": 60000,
+                      "max_backoff": 600000,
+                      "backoff_multiplier": 2
+                    },
+                    "timeout": 60000
+                  }
+                ],
+                "catch_block": [
+                  {
+                    "type": "step",
+                    "id": "notify_failed_2",
+                    "handler": "http_request",
+                    "params": {
+                      "method": "POST",
+                      "url": "{{context.data.email_api_url}}",
+                      "headers": {
+                        "content-type": "application/json"
+                      },
+                      "body": "{\"template\":\"payment_final_notice\",\"to\":\"{{context.data.email}}\",\"invoice_id\":\"{{context.data.invoice_id}}\"}"
+                    },
+                    "retry": {
+                      "max_attempts": 5,
+                      "initial_backoff": 2000,
+                      "max_backoff": 300000,
+                      "backoff_multiplier": 2
+                    }
+                  },
+                  {
+                    "type": "try_catch",
+                    "id": "attempt_3",
+                    "try_block": [
+                      {
+                        "type": "step",
+                        "id": "charge_3",
+                        "handler": "charge_payment",
+                        "queue_name": "billing",
+                        "params": {
+                          "invoice_id": "{{context.data.invoice_id}}",
+                          "attempt": 3
+                        },
+                        "delay": {
+                          "duration": 432000000
+                        },
+                        "retry": {
+                          "max_attempts": 3,
+                          "initial_backoff": 60000,
+                          "max_backoff": 600000,
+                          "backoff_multiplier": 2
+                        },
+                        "timeout": 60000
+                      }
+                    ],
+                    "catch_block": [
+                      {
+                        "type": "step",
+                        "id": "suspend_subscription",
+                        "handler": "suspend_subscription",
+                        "queue_name": "billing",
+                        "params": {
+                          "invoice_id": "{{context.data.invoice_id}}"
+                        },
+                        "retry": {
+                          "max_attempts": 5,
+                          "initial_backoff": 5000,
+                          "max_backoff": 300000,
+                          "backoff_multiplier": 2
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "step",
+            "id": "log_outcome",
+            "handler": "log",
+            "params": {
+              "message": "dunning finished for invoice {{context.data.invoice_id}}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "rag-ingestion",
+      "description": "For each document: fetch it over HTTP, embed it with an OpenAI-compatible endpoint, and store it in tenant-scoped semantic memory for later memory_search.",
+      "tags": [
+        "rag",
+        "ai",
+        "embeddings",
+        "memory",
+        "for-each"
+      ],
+      "author": "orch8-io",
+      "min_engine_version": "0.7.1",
+      "handlers": {
+        "builtin": [
+          "http_request",
+          "embed",
+          "memory_store",
+          "log"
+        ],
+        "workers": []
+      },
+      "requires": [
+        "context.data.documents: array of {id, url, title}; each url returns the document text.",
+        "OPENAI_API_KEY in the engine environment (or change api_key_env / base_url / model on embed_document for another OpenAI-compatible provider).",
+        "Tenant-scoped memory in namespace context.data.memory_namespace must be permitted by your memory governance policy (see docs/GOVERNED_MEMORY.md)."
+      ],
+      "sequence": {
+        "$schema": "https://orch8.io/contracts/sequence.schema.json",
+        "schema_version": 1,
+        "namespace": "default",
+        "name": "rag-ingestion",
+        "blocks": [
+          {
+            "type": "for_each",
+            "id": "ingest_documents",
+            "collection": "context.data.documents",
+            "item_var": "doc",
+            "max_iterations": 500,
+            "retain_iterations": 20,
+            "body": [
+              {
+                "type": "step",
+                "id": "fetch_document",
+                "handler": "http_request",
+                "params": {
+                  "method": "GET",
+                  "url": "{{context.data.doc.url}}",
+                  "timeout_ms": 30000
+                },
+                "retry": {
+                  "max_attempts": 4,
+                  "initial_backoff": 2000,
+                  "max_backoff": 60000,
+                  "backoff_multiplier": 2
+                }
+              },
+              {
+                "type": "step",
+                "id": "embed_document",
+                "handler": "embed",
+                "params": {
+                  "input": "{{outputs.fetch_document.body}}",
+                  "model": "text-embedding-3-small",
+                  "api_key_env": "OPENAI_API_KEY"
+                },
+                "retry": {
+                  "max_attempts": 4,
+                  "initial_backoff": 2000,
+                  "max_backoff": 60000,
+                  "backoff_multiplier": 2
+                }
+              },
+              {
+                "type": "step",
+                "id": "store_document",
+                "handler": "memory_store",
+                "params": {
+                  "scope": "tenant",
+                  "namespace": "{{context.data.memory_namespace}}",
+                  "key": "{{context.data.doc.id}}",
+                  "text": "{{outputs.fetch_document.body}}",
+                  "embedding": "{{outputs.embed_document.embedding}}",
+                  "model": "text-embedding-3-small",
+                  "metadata": {
+                    "source_url": "{{context.data.doc.url}}",
+                    "title": "{{context.data.doc.title}}"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "step",
+            "id": "log_done",
+            "handler": "log",
+            "params": {
+              "message": "rag ingestion finished"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "webhook-fan-out",
+      "description": "Deliver one event to several webhook subscribers in parallel with independent retry budgets; a best-effort subscriber is isolated behind try/catch so it cannot fail the run.",
+      "tags": [
+        "webhooks",
+        "fan-out",
+        "parallel",
+        "retry",
+        "integrations"
+      ],
+      "author": "orch8-io",
+      "min_engine_version": "0.7.1",
+      "handlers": {
+        "builtin": [
+          "http_request",
+          "log"
+        ],
+        "workers": []
+      },
+      "requires": [
+        "context.data: event_id, event_type, crm_webhook_url, analytics_webhook_url, partner_webhook_url.",
+        "Receivers should deduplicate on the x-event-id header: retries can redeliver an event.",
+        "Built-in http_request branches are dispatched one at a time per instance (they interleave, not run concurrently); see Parallel in docs/SEQUENCES.md."
+      ],
+      "sequence": {
+        "$schema": "https://orch8.io/contracts/sequence.schema.json",
+        "schema_version": 1,
+        "namespace": "default",
+        "name": "webhook-fan-out",
+        "blocks": [
+          {
+            "type": "parallel",
+            "id": "deliver_to_subscribers",
+            "branches": [
+              [
+                {
+                  "type": "step",
+                  "id": "deliver_crm",
+                  "handler": "http_request",
+                  "params": {
+                    "method": "POST",
+                    "url": "{{context.data.crm_webhook_url}}",
+                    "headers": {
+                      "content-type": "application/json",
+                      "x-event-id": "{{context.data.event_id}}"
+                    },
+                    "body": "{\"event_id\":\"{{context.data.event_id}}\",\"type\":\"{{context.data.event_type}}\"}",
+                    "timeout_ms": 10000
+                  },
+                  "retry": {
+                    "max_attempts": 8,
+                    "initial_backoff": 1000,
+                    "max_backoff": 600000,
+                    "backoff_multiplier": 2
+                  }
+                }
+              ],
+              [
+                {
+                  "type": "step",
+                  "id": "deliver_analytics",
+                  "handler": "http_request",
+                  "params": {
+                    "method": "POST",
+                    "url": "{{context.data.analytics_webhook_url}}",
+                    "headers": {
+                      "content-type": "application/json",
+                      "x-event-id": "{{context.data.event_id}}"
+                    },
+                    "body": "{\"event_id\":\"{{context.data.event_id}}\",\"type\":\"{{context.data.event_type}}\"}",
+                    "timeout_ms": 10000
+                  },
+                  "retry": {
+                    "max_attempts": 8,
+                    "initial_backoff": 1000,
+                    "max_backoff": 600000,
+                    "backoff_multiplier": 2
+                  }
+                }
+              ],
+              [
+                {
+                  "type": "try_catch",
+                  "id": "deliver_partner_best_effort",
+                  "try_block": [
+                    {
+                      "type": "step",
+                      "id": "deliver_partner",
+                      "handler": "http_request",
+                      "params": {
+                        "method": "POST",
+                        "url": "{{context.data.partner_webhook_url}}",
+                        "headers": {
+                          "content-type": "application/json",
+                          "x-event-id": "{{context.data.event_id}}"
+                        },
+                        "body": "{\"event_id\":\"{{context.data.event_id}}\",\"type\":\"{{context.data.event_type}}\"}",
+                        "timeout_ms": 10000
+                      },
+                      "retry": {
+                        "max_attempts": 3,
+                        "initial_backoff": 5000,
+                        "max_backoff": 60000,
+                        "backoff_multiplier": 2
+                      }
+                    }
+                  ],
+                  "catch_block": [
+                    {
+                      "type": "step",
+                      "id": "log_partner_failure",
+                      "handler": "log",
+                      "params": {
+                        "message": "partner webhook delivery failed for event {{context.data.event_id}}"
+                      }
+                    }
+                  ]
+                }
+              ]
+            ]
+          },
+          {
+            "type": "step",
+            "id": "log_delivered",
+            "handler": "log",
+            "params": {
+              "message": "fan-out complete for event {{context.data.event_id}}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

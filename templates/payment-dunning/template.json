@@ -1,0 +1,38 @@
+{
+  "name": "payment-dunning",
+  "description": "Charge a failed invoice up to three times (immediately, after 3 days, after 5 more days) with per-attempt retries and customer emails, then suspend the subscription.",
+  "tags": ["billing", "dunning", "payments", "try-catch", "delays", "workers"],
+  "author": "orch8-io",
+  "min_engine_version": "0.7.1",
+  "handlers": {
+    "builtin": ["http_request", "log"],
+    "workers": [
+      {
+        "handler": "charge_payment",
+        "queue": "billing",
+        "contract": "Input {invoice_id, attempt}. Complete on success; fail the task (non-retryable) on a hard decline so the catch path runs. Must be idempotent per (invoice_id, attempt)."
+      },
+      {
+        "handler": "suspend_subscription",
+        "queue": "billing",
+        "contract": "Input {invoice_id}. Suspends the subscription that owns the invoice. Must be idempotent."
+      }
+    ]
+  },
+  "requires": [
+    "External workers for charge_payment and suspend_subscription polling queue `billing` (see docs/WORKERS.md in the engine repo).",
+    "An HTTP email API at context.data.email_api_url that accepts {template, to, invoice_id}."
+  ],
+  "validation": {
+    "context": {
+      "invoice_id": "inv_123",
+      "email": "billing@example.com",
+      "email_api_url": "https://email.example.com/v1/send"
+    },
+    "mocks": {
+      "charge_payment": { "charged": true },
+      "suspend_subscription": { "suspended": true },
+      "http_request": { "status": 202, "body": {} }
+    }
+  }
+}

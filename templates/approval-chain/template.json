@@ -1,0 +1,28 @@
+{
+  "name": "approval-chain",
+  "description": "Two-level human approval: manager review, then finance sign-off above an amount threshold, then a callback with the final decision.",
+  "tags": ["approvals", "human-in-the-loop", "router"],
+  "author": "orch8-io",
+  "min_engine_version": "0.7.1",
+  "handlers": {
+    "builtin": ["human_review", "noop", "http_request"],
+    "workers": []
+  },
+  "requires": [
+    "Reviewers answer through the approvals inbox (dashboard, `/api/v1/approvals`, or the mobile SDK).",
+    "context.data: request_id, summary, amount (number), finance_threshold (number), callback_url.",
+    "An unanswered review times out after 48h (manager) / 72h (finance); adjust wait_for_input.timeout to your policy."
+  ],
+  "validation": {
+    "context": {
+      "request_id": "req_42",
+      "summary": "New laptop",
+      "amount": 2500,
+      "finance_threshold": 1000,
+      "callback_url": "https://app.example.com/hooks/approvals"
+    },
+    "mocks": {
+      "http_request": { "status": 200, "body": {} }
+    }
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://orch8.io/contracts/sequence.schema.json",
+  "schema_version": 1,
+  "namespace": "default",
+  "name": "approval-chain",
+  "blocks": [
+    {
+      "type": "step",
+      "id": "manager_approval",
+      "handler": "human_review",
+      "params": {
+        "instructions": "Approve or reject request {{context.data.request_id}}: {{context.data.summary}}",
+        "reviewer": "manager"
+      },
+      "wait_for_input": {
+        "prompt": "Manager approval",
+        "timeout": 172800000,
+        "choices": [
+          { "label": "Approve", "value": "approved" },
+          { "label": "Reject", "value": "rejected" }
+        ],
+        "store_as": "manager_decision"
+      }
+    },
+    {
+      "type": "router",
+      "id": "route_manager_decision",
+      "routes": [
+        {
+          "condition": "context.data.manager_decision == \"approved\" && context.data.amount > context.data.finance_threshold",
+          "blocks": [
+            {
+              "type": "step",
+              "id": "finance_approval",
+              "handler": "human_review",
+              "params": {
+                "instructions": "Finance sign-off for {{context.data.request_id}} (amount {{context.data.amount}})",
+                "reviewer": "finance"
+              },
+              "wait_for_input": {
+                "prompt": "Finance approval",
+                "timeout": 259200000,
+                "choices": [
+                  { "label": "Approve", "value": "approved" },
+                  { "label": "Reject", "value": "rejected" }
+                ],
+                "store_as": "finance_decision"
+              }
+            }
+          ]
+        }
+      ],
+      "default": [
+        {
+          "type": "step",
+          "id": "skip_finance",
+          "handler": "noop",
+          "params": { "reason": "below finance threshold or rejected by manager" }
+        }
+      ]
+    },
+    {
+      "type": "router",
+      "id": "route_final_decision",
+      "routes": [
+        {
+          "condition": "context.data.manager_decision == \"approved\" && context.data.finance_decision != \"rejected\"",
+          "blocks": [
+            {
+              "type": "step",
+              "id": "notify_approved",
+              "handler": "http_request",
+              "params": {
+                "method": "POST",
+                "url": "{{context.data.callback_url}}",
+                "headers": { "content-type": "application/json" },
+                "body": "{\"request_id\":\"{{context.data.request_id}}\",\"decision\":\"approved\"}"
+              },
+              "retry": { "max_attempts": 5, "initial_backoff": 2000, "max_backoff": 300000, "backoff_multiplier": 2.0 }
+            }
+          ]
+        }
+      ],
+      "default": [
+        {
+          "type": "step",
+          "id": "notify_rejected",
+          "handler": "http_request",
+          "params": {
+            "method": "POST",
+            "url": "{{context.data.callback_url}}",
+            "headers": { "content-type": "application/json" },
+            "body": "{\"request_id\":\"{{context.data.request_id}}\",\"decision\":\"rejected\"}"
+          },
+          "retry": { "max_attempts": 5, "initial_backoff": 2000, "max_backoff": 300000, "backoff_multiplier": 2.0 }
+        }
+      ]
+    }
+  ]
+}

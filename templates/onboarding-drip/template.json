@@ -1,0 +1,28 @@
+{
+  "name": "onboarding-drip",
+  "description": "Welcome email, day-1 getting-started email, then a business-day activation check that nudges inactive users and alerts the success team.",
+  "tags": ["onboarding", "email", "drip", "delays", "router"],
+  "author": "orch8-io",
+  "min_engine_version": "0.7.1",
+  "handlers": {
+    "builtin": ["http_request", "log", "emit_event"],
+    "workers": []
+  },
+  "requires": [
+    "An HTTP email API reachable at context.data.email_api_url that accepts {template, to}.",
+    "An activation-status endpoint at context.data.activation_status_url returning JSON {\"activated\": bool}.",
+    "An event trigger whose slug is context.data.success_team_trigger (emit_event fails if the trigger does not exist)."
+  ],
+  "validation": {
+    "context": {
+      "email": "alice@example.com",
+      "email_api_url": "https://email.example.com/v1/send",
+      "activation_status_url": "https://app.example.com/api/users/alice/activation",
+      "success_team_trigger": "success-team-follow-up"
+    },
+    "mocks": {
+      "http_request": { "status": 200, "body": { "activated": false } },
+      "emit_event": { "instance_id": null, "deduped": false }
+    }
+  }
+}

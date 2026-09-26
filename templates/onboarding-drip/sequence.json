@@ -1,0 +1,110 @@
+{
+  "$schema": "https://orch8.io/contracts/sequence.schema.json",
+  "schema_version": 1,
+  "namespace": "default",
+  "name": "onboarding-drip",
+  "blocks": [
+    {
+      "type": "step",
+      "id": "send_welcome",
+      "handler": "http_request",
+      "params": {
+        "method": "POST",
+        "url": "{{context.data.email_api_url}}",
+        "headers": { "content-type": "application/json" },
+        "body": "{\"template\":\"welcome\",\"to\":\"{{context.data.email}}\"}"
+      },
+      "retry": {
+        "max_attempts": 5,
+        "initial_backoff": 2000,
+        "max_backoff": 300000,
+        "backoff_multiplier": 2.0
+      },
+      "timeout": 30000
+    },
+    {
+      "type": "step",
+      "id": "send_getting_started",
+      "handler": "http_request",
+      "params": {
+        "method": "POST",
+        "url": "{{context.data.email_api_url}}",
+        "headers": { "content-type": "application/json" },
+        "body": "{\"template\":\"getting_started\",\"to\":\"{{context.data.email}}\"}"
+      },
+      "delay": { "duration": 86400000 },
+      "retry": {
+        "max_attempts": 5,
+        "initial_backoff": 2000,
+        "max_backoff": 300000,
+        "backoff_multiplier": 2.0
+      },
+      "timeout": 30000
+    },
+    {
+      "type": "step",
+      "id": "check_activation",
+      "handler": "http_request",
+      "params": {
+        "method": "GET",
+        "url": "{{context.data.activation_status_url}}"
+      },
+      "delay": { "duration": 172800000, "business_days_only": true },
+      "retry": {
+        "max_attempts": 3,
+        "initial_backoff": 5000,
+        "max_backoff": 60000,
+        "backoff_multiplier": 2.0
+      },
+      "timeout": 15000
+    },
+    {
+      "type": "router",
+      "id": "route_by_activation",
+      "routes": [
+        {
+          "condition": "outputs.check_activation.body.activated == true",
+          "blocks": [
+            {
+              "type": "step",
+              "id": "log_activated",
+              "handler": "log",
+              "params": { "message": "user activated during onboarding" }
+            }
+          ]
+        }
+      ],
+      "default": [
+        {
+          "type": "step",
+          "id": "send_activation_nudge",
+          "handler": "http_request",
+          "params": {
+            "method": "POST",
+            "url": "{{context.data.email_api_url}}",
+            "headers": { "content-type": "application/json" },
+            "body": "{\"template\":\"activation_nudge\",\"to\":\"{{context.data.email}}\"}"
+          },
+          "retry": {
+            "max_attempts": 5,
+            "initial_backoff": 2000,
+            "max_backoff": 300000,
+            "backoff_multiplier": 2.0
+          },
+          "timeout": 30000
+        },
+        {
+          "type": "step",
+          "id": "notify_success_team",
+          "handler": "emit_event",
+          "params": {
+            "trigger_slug": "{{context.data.success_team_trigger}}",
+            "data": { "email": "{{context.data.email}}", "reason": "not_activated_after_onboarding" },
+            "dedupe_key": "onboarding-not-activated-{{context.data.email}}",
+            "dedupe_scope": "tenant"
+          }
+        }
+      ]
+    }
+  ]
+}

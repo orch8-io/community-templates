@@ -1,0 +1,79 @@
+{
+  "$schema": "https://orch8.io/contracts/sequence.schema.json",
+  "schema_version": 1,
+  "namespace": "default",
+  "name": "webhook-fan-out",
+  "blocks": [
+    {
+      "type": "parallel",
+      "id": "deliver_to_subscribers",
+      "branches": [
+        [
+          {
+            "type": "step",
+            "id": "deliver_crm",
+            "handler": "http_request",
+            "params": {
+              "method": "POST",
+              "url": "{{context.data.crm_webhook_url}}",
+              "headers": { "content-type": "application/json", "x-event-id": "{{context.data.event_id}}" },
+              "body": "{\"event_id\":\"{{context.data.event_id}}\",\"type\":\"{{context.data.event_type}}\"}",
+              "timeout_ms": 10000
+            },
+            "retry": { "max_attempts": 8, "initial_backoff": 1000, "max_backoff": 600000, "backoff_multiplier": 2.0 }
+          }
+        ],
+        [
+          {
+            "type": "step",
+            "id": "deliver_analytics",
+            "handler": "http_request",
+            "params": {
+              "method": "POST",
+              "url": "{{context.data.analytics_webhook_url}}",
+              "headers": { "content-type": "application/json", "x-event-id": "{{context.data.event_id}}" },
+              "body": "{\"event_id\":\"{{context.data.event_id}}\",\"type\":\"{{context.data.event_type}}\"}",
+              "timeout_ms": 10000
+            },
+            "retry": { "max_attempts": 8, "initial_backoff": 1000, "max_backoff": 600000, "backoff_multiplier": 2.0 }
+          }
+        ],
+        [
+          {
+            "type": "try_catch",
+            "id": "deliver_partner_best_effort",
+            "try_block": [
+              {
+                "type": "step",
+                "id": "deliver_partner",
+                "handler": "http_request",
+                "params": {
+                  "method": "POST",
+                  "url": "{{context.data.partner_webhook_url}}",
+                  "headers": { "content-type": "application/json", "x-event-id": "{{context.data.event_id}}" },
+                  "body": "{\"event_id\":\"{{context.data.event_id}}\",\"type\":\"{{context.data.event_type}}\"}",
+                  "timeout_ms": 10000
+                },
+                "retry": { "max_attempts": 3, "initial_backoff": 5000, "max_backoff": 60000, "backoff_multiplier": 2.0 }
+              }
+            ],
+            "catch_block": [
+              {
+                "type": "step",
+                "id": "log_partner_failure",
+                "handler": "log",
+                "params": { "message": "partner webhook delivery failed for event {{context.data.event_id}}" }
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "type": "step",
+      "id": "log_delivered",
+      "handler": "log",
+      "params": { "message": "fan-out complete for event {{context.data.event_id}}" }
+    }
+  ]
+}

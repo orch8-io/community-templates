@@ -1,0 +1,28 @@
+{
+  "name": "webhook-fan-out",
+  "description": "Deliver one event to several webhook subscribers in parallel with independent retry budgets; a best-effort subscriber is isolated behind try/catch so it cannot fail the run.",
+  "tags": ["webhooks", "fan-out", "parallel", "retry", "integrations"],
+  "author": "orch8-io",
+  "min_engine_version": "0.7.1",
+  "handlers": {
+    "builtin": ["http_request", "log"],
+    "workers": []
+  },
+  "requires": [
+    "context.data: event_id, event_type, crm_webhook_url, analytics_webhook_url, partner_webhook_url.",
+    "Receivers should deduplicate on the x-event-id header: retries can redeliver an event.",
+    "Built-in http_request branches are dispatched one at a time per instance (they interleave, not run concurrently); see Parallel in docs/SEQUENCES.md."
+  ],
+  "validation": {
+    "context": {
+      "event_id": "evt_1",
+      "event_type": "order.created",
+      "crm_webhook_url": "https://crm.example.com/hooks/orch8",
+      "analytics_webhook_url": "https://analytics.example.com/hooks/orch8",
+      "partner_webhook_url": "https://partner.example.com/hooks/orch8"
+    },
+    "mocks": {
+      "http_request": { "status": 200, "body": {} }
+    }
+  }
+}

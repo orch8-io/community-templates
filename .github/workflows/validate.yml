@@ -1,0 +1,33 @@
+name: Validate templates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      engine_image:
+        description: Engine image used for the dry-run validation
+        required: false
+        default: ghcr.io/orch8-io/engine:latest
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      # Only a workflow_dispatch input (maintainer-controlled) can change this;
+      # it is passed through env, never interpolated into the script.
+      ENGINE_IMAGE: ${{ inputs.engine_image || 'ghcr.io/orch8-io/engine:latest' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Pull engine image
+        run: docker pull "$ENGINE_IMAGE"
+      - name: Validate templates and catalog
+        # Node is preinstalled on ubuntu-latest runners.
+        run: |
+          node --version
+          ORCH8_BIN="docker run --rm -v $GITHUB_WORKSPACE:/w:ro -w /w --entrypoint orch8 $ENGINE_IMAGE" \
+            scripts/validate.sh

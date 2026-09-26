@@ -1,0 +1,10 @@
+TODO: License not yet chosen.
+
+The maintainers must pick a license for community-contributed templates
+before this repository is published. Until then, no rights are granted
+beyond those of the individual contributors.
+
+Note: the Orch8 engine itself is licensed under the Business Source License
+1.1 (see https://github.com/orch8-io/engine/blob/main/LICENSE). Templates are
+data files that run on the engine, but that does not settle which license
+applies to them. Decide this explicitly.

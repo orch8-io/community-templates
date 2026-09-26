@@ -1,0 +1,123 @@
+{
+  "$schema": "https://orch8.io/contracts/sequence.schema.json",
+  "schema_version": 1,
+  "namespace": "default",
+  "name": "payment-dunning",
+  "blocks": [
+    {
+      "type": "try_catch",
+      "id": "attempt_1",
+      "try_block": [
+        {
+          "type": "step",
+          "id": "charge_1",
+          "handler": "charge_payment",
+          "queue_name": "billing",
+          "params": {
+            "invoice_id": "{{context.data.invoice_id}}",
+            "attempt": 1
+          },
+          "retry": {
+            "max_attempts": 3,
+            "initial_backoff": 60000,
+            "max_backoff": 600000,
+            "backoff_multiplier": 2.0
+          },
+          "timeout": 60000
+        }
+      ],
+      "catch_block": [
+        {
+          "type": "step",
+          "id": "notify_failed_1",
+          "handler": "http_request",
+          "params": {
+            "method": "POST",
+            "url": "{{context.data.email_api_url}}",
+            "headers": { "content-type": "application/json" },
+            "body": "{\"template\":\"payment_failed\",\"to\":\"{{context.data.email}}\",\"invoice_id\":\"{{context.data.invoice_id}}\"}"
+          },
+          "retry": { "max_attempts": 5, "initial_backoff": 2000, "max_backoff": 300000, "backoff_multiplier": 2.0 }
+        },
+        {
+          "type": "try_catch",
+          "id": "attempt_2",
+          "try_block": [
+            {
+              "type": "step",
+              "id": "charge_2",
+              "handler": "charge_payment",
+              "queue_name": "billing",
+              "params": {
+                "invoice_id": "{{context.data.invoice_id}}",
+                "attempt": 2
+              },
+              "delay": { "duration": 259200000 },
+              "retry": {
+                "max_attempts": 3,
+                "initial_backoff": 60000,
+                "max_backoff": 600000,
+                "backoff_multiplier": 2.0
+              },
+              "timeout": 60000
+            }
+          ],
+          "catch_block": [
+            {
+              "type": "step",
+              "id": "notify_failed_2",
+              "handler": "http_request",
+              "params": {
+                "method": "POST",
+                "url": "{{context.data.email_api_url}}",
+                "headers": { "content-type": "application/json" },
+                "body": "{\"template\":\"payment_final_notice\",\"to\":\"{{context.data.email}}\",\"invoice_id\":\"{{context.data.invoice_id}}\"}"
+              },
+              "retry": { "max_attempts": 5, "initial_backoff": 2000, "max_backoff": 300000, "backoff_multiplier": 2.0 }
+            },
+            {
+              "type": "try_catch",
+              "id": "attempt_3",
+              "try_block": [
+                {
+                  "type": "step",
+                  "id": "charge_3",
+                  "handler": "charge_payment",
+                  "queue_name": "billing",
+                  "params": {
+                    "invoice_id": "{{context.data.invoice_id}}",
+                    "attempt": 3
+                  },
+                  "delay": { "duration": 432000000 },
+                  "retry": {
+                    "max_attempts": 3,
+                    "initial_backoff": 60000,
+                    "max_backoff": 600000,
+                    "backoff_multiplier": 2.0
+                  },
+                  "timeout": 60000
+                }
+              ],
+              "catch_block": [
+                {
+                  "type": "step",
+                  "id": "suspend_subscription",
+                  "handler": "suspend_subscription",
+                  "queue_name": "billing",
+                  "params": { "invoice_id": "{{context.data.invoice_id}}" },
+                  "retry": { "max_attempts": 5, "initial_backoff": 5000, "max_backoff": 300000, "backoff_multiplier": 2.0 }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "step",
+      "id": "log_outcome",
+      "handler": "log",
+      "params": { "message": "dunning finished for invoice {{context.data.invoice_id}}" }
+    }
+  ]
+}
