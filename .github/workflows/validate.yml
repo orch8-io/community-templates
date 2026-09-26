@@ -6,28 +6,69 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      engine_image:
-        description: Engine image used for the dry-run validation
+      engine_ref:
+        description: orch8-io/engine git ref to build the CLI from (ignored when engine_image is set)
         required: false
-        default: ghcr.io/orch8-io/engine:latest
+        default: main
+      engine_image:
+        description: Optional engine image to validate with instead of building from source (e.g. ghcr.io/orch8-io/engine:0.8.0)
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
-      # Only a workflow_dispatch input (maintainer-controlled) can change this;
-      # it is passed through env, never interpolated into the script.
-      ENGINE_IMAGE: ${{ inputs.engine_image || 'ghcr.io/orch8-io/engine:latest' }}
+      # Only workflow_dispatch inputs (maintainer-controlled) can change these;
+      # they are passed through env, never interpolated into scripts.
+      ENGINE_REF: ${{ inputs.engine_ref || 'main' }}
+      ENGINE_IMAGE: ${{ inputs.engine_image || '' }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The templates use `orch8 dev --input`, which is newer than the latest
+      # published engine image, so by default the CLI is built from engine
+      # source. Once a release ships it, dispatch with engine_image instead.
+      - name: Check out engine
+        if: env.ENGINE_IMAGE == ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: orch8-io/engine
+          ref: ${{ env.ENGINE_REF }}
+          path: engine
+      - name: Cache engine build
+        if: env.ENGINE_IMAGE == ''
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: engine
+      - name: Build orch8 CLI
+        if: env.ENGINE_IMAGE == ''
+        working-directory: engine
+        env:
+          SQLX_OFFLINE: "true"
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          # The CLI embeds the dashboard build; an empty dir is enough here.
+          mkdir -p dashboard/dist
+          cargo build --locked -p orch8-cli --bin orch8
+          echo "ORCH8_BIN=$GITHUB_WORKSPACE/engine/target/debug/orch8" >> "$GITHUB_ENV"
       - name: Pull engine image
-        run: docker pull "$ENGINE_IMAGE"
+        if: env.ENGINE_IMAGE != ''
+        run: |
+          docker pull "$ENGINE_IMAGE"
+          echo "ORCH8_BIN=docker run --rm -v $GITHUB_WORKSPACE:/w:ro -w /w --entrypoint orch8 $ENGINE_IMAGE" >> "$GITHUB_ENV"
+
       - name: Validate templates and catalog
         # Node is preinstalled on ubuntu-latest runners.
         run: |
           node --version
-          ORCH8_BIN="docker run --rm -v $GITHUB_WORKSPACE:/w:ro -w /w --entrypoint orch8 $ENGINE_IMAGE" \
-            scripts/validate.sh
+          $ORCH8_BIN --version || true
+          scripts/validate.sh
