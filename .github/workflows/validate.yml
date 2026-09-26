@@ -64,7 +64,7 @@ jobs:
         if: env.ENGINE_IMAGE != ''
         run: |
           docker pull "$ENGINE_IMAGE"
-          echo "ORCH8_BIN=docker run --rm -v $GITHUB_WORKSPACE:/w:ro -w /w --entrypoint orch8 $ENGINE_IMAGE" >> "$GITHUB_ENV"
+          echo "ORCH8_BIN=docker run --rm --network host -v $GITHUB_WORKSPACE:/w:ro -w /w --entrypoint orch8 $ENGINE_IMAGE" >> "$GITHUB_ENV"
 
       - name: Validate templates and catalog
         # Node is preinstalled on ubuntu-latest runners.
@@ -72,3 +72,15 @@ jobs:
           node --version
           $ORCH8_BIN --version || true
           scripts/validate.sh
+
+      - name: Catalog loads with `orch8 templates --catalog-url`
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &
+          for _ in $(seq 20); do curl -fsS -o /dev/null http://127.0.0.1:8765/catalog.json && break; sleep 0.5; done
+          CATALOG=http://127.0.0.1:8765/catalog.json
+          $ORCH8_BIN templates list --catalog-url "$CATALOG" | tee list.txt
+          for name in $(node -e 'for (const t of require("./catalog.json").templates) console.log(t.name)'); do
+            grep -q "$name" list.txt || { echo "::error::$name missing from templates list"; exit 1; }
+            $ORCH8_BIN templates show "$name" --catalog-url "$CATALOG" > /dev/null
+            echo "show $name: ok"
+          done

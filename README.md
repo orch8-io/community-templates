@@ -14,14 +14,22 @@ Reusable [Orch8](https://github.com/orch8-io/engine) workflow sequences that you
 ## Use
 
 `catalog.json` uses the format that `orch8 templates --catalog-url` reads. It needs
-an `orch8` CLI new enough to have `--catalog-url`, which is newer than 0.7.1.
+an `orch8` CLI new enough to have `--catalog-url`, which is newer than 0.7.1 (build the
+engine from `main` until the next release).
+
+The catalog is served at a stable URL that always tracks `main`:
 
 ```bash
-CATALOG=https://raw.githubusercontent.com/orch8-io/community-templates/main/catalog.json  # pending: repo not yet published
+CATALOG=https://raw.githubusercontent.com/orch8-io/community-templates/main/catalog.json
 orch8 templates list --catalog-url "$CATALOG"
+orch8 templates show payment-dunning --catalog-url "$CATALOG"
 orch8 templates pull payment-dunning --catalog-url "$CATALOG" --out payment-dunning.json
 # or: export ORCH8_TEMPLATE_CATALOG_URL="$CATALOG"
 ```
+
+To pin a released set instead, use the tag in the URL, e.g.
+`https://raw.githubusercontent.com/orch8-io/community-templates/v0.1.0/catalog.json`
+(each [release](https://github.com/orch8-io/community-templates/releases) also attaches `catalog.json`).
 
 Each `templates/<name>/template.json` file lists:
 

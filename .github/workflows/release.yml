@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Full engine validation runs on every push to main (validate.yml);
+      # here only make sure the catalog being released is current.
+      - name: Catalog is up to date
+        run: node scripts/build-catalog.mjs --check
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          COUNT="$(node -p 'require("./catalog.json").templates.length')"
+          cat > notes.md <<NOTES
+          ${COUNT} templates. Use this release's catalog with the orch8 CLI:
+
+          \`\`\`sh
+          # pinned to this release
+          orch8 templates list --catalog-url https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/catalog.json
+          # always the latest templates on main
+          orch8 templates list --catalog-url https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/catalog.json
+          \`\`\`
+          NOTES
+          gh release create "$GITHUB_REF_NAME" catalog.json \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
